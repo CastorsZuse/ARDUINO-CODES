@@ -1,0 +1,144 @@
+#include <Servo.h>
+
+
+Servo myservo1;  // create servo object to control a servo
+Servo myservo2;  // create servo object to control a servo
+Servo myservo3;  // create servo object to control a servo
+
+
+int angle1 =90;    // initial angle  for servo
+int angle2 =0;    // initial angle  for servo
+int angle3 =0;    // initial angle  for servo
+
+int angleStep =1;
+
+#define LEFT 2  // pin 12 is connected to left button
+#define RIGHT  3  // pin 2 is connected to right button
+#define UP 4
+#define DOWN 5
+#define OPEN 6
+#define CLOSE 7
+
+void setup() {
+  // Servo button demo by Robojax.com
+  Serial.begin(9600);          //  setup serial
+  myservo1.attach(9);  // attaches the servo on pin 9 to the servo object
+  myservo2.attach(10);
+  myservo3.attach(11);
+  pinMode(LEFT,INPUT_PULLUP); // assign pin 12 ass input for Left button
+  pinMode(RIGHT,INPUT_PULLUP);// assing pin 2 as input for right button
+  pinMode(UP,INPUT_PULLUP);
+  pinMode(DOWN,INPUT_PULLUP);
+  pinMode(OPEN,INPUT_PULLUP);
+  pinMode(CLOSE,INPUT_PULLUP);
+
+
+  myservo1.write(angle1);// 
+  myservo2.write(angle2);
+  myservo3.write(angle3);
+}
+
+void loop() {
+  while(digitalRead(RIGHT) == LOW){
+
+    if (angle1 > 20 && angle1 <= 150) {
+      angle1 = angle1 - angleStep;
+       if(angle1 < 20){
+        angle1 = 20;
+       }else{
+      myservo1.write(angle1); // move the servo to desired angle
+      Serial.print("Moved to: ");
+      Serial.print(angle1);   // print the angle
+      Serial.println(" degree");
+       }
+    }
+    
+  delay(20); // waits for the servo to get there
+  }
+
+  while(digitalRead(LEFT) == LOW){
+
+    if (angle1 >= 20 && angle1 <= 150) {
+      angle1 = angle1 + angleStep;
+      if(angle1 >150){
+        angle1 =150;
+       }else{
+      myservo1.write(angle1); // move the servo to desired angle
+      Serial.print("Moved to: ");
+      Serial.print(angle1);   // print the angle
+      Serial.println(" degree");
+       }
+    }
+    
+  delay(20); // waits for the servo to get there
+  }// 
+
+   while(digitalRead(UP) == LOW){
+
+    if (angle2 > 0 && angle2 <= 60) {
+      angle2 = angle2 - angleStep;
+       if(angle2 < 0){
+        angle2 = 0;
+       }else{
+      myservo2.write(angle2); // move the servo to desired angle
+      Serial.print("Moved to: ");
+      Serial.print(angle2);   // print the angle
+      Serial.println(" degree");
+       }
+    }
+    
+  delay(10); // waits for the servo to get there
+  }
+
+  while(digitalRead(DOWN) == LOW){
+
+    if (angle2 >= 0 && angle2 <= 60) {
+      angle2 = angle2 + angleStep;
+      if(angle2 >60){
+        angle2 =60;
+       }else{
+      myservo2.write(angle2); // move the servo to desired angle
+      Serial.print("Moved to: ");
+      Serial.print(angle2);   // print the angle
+      Serial.println(" degree");
+       }
+    }
+    
+  delay(10); // waits for the servo to get there
+  }// 
+
+   while(digitalRead(OPEN) == LOW){
+
+    if (angle3 > 0 && angle3 <= 60) {
+      angle3 = angle3 - angleStep;
+       if(angle3 < 0){
+        angle3 = 0;
+       }else{
+      myservo3.write(angle3); // move the servo to desired angle
+      Serial.print("Moved to: ");
+      Serial.print(angle3);   // print the angle
+      Serial.println(" degree");
+       }
+    }
+    
+  delay(10); // waits for the servo to get there
+  }
+
+  while(digitalRead(CLOSE) == LOW){
+
+    if (angle3 >= 0 && angle3 <= 60) {
+      angle3 = angle3 + angleStep;
+      if(angle3 >60){
+        angle3 =60;
+       }else{
+      myservo2.write(angle3); // move the servo to desired angle
+      Serial.print("Moved to: ");
+      Serial.print(angle3);   // print the angle
+      Serial.println(" degree");
+       }
+    }
+    
+  delay(10); // waits for the servo to get there
+  }// 
+
+}
