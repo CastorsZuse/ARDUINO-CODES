@@ -131,7 +131,7 @@ void loop() {
       if(angle3 >60){
         angle3 =60;
        }else{
-      myservo2.write(angle3); // move the servo to desired angle
+      myservo3.write(angle3); // move the servo to desired angle
       Serial.print("Moved to: ");
       Serial.print(angle3);   // print the angle
       Serial.println(" degree");
