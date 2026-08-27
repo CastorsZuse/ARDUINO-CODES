@@ -1,0 +1,328 @@
+#include <Servo.h>
+
+// =====================
+//      PIN CONFIG
+// =====================
+
+const int LIFT_PIN         = 11;
+const int PAN_PIN          = 10;
+const int WRIST_PIN        = 9;
+const int CLAW_PIN         = 8;
+const int AIM_TILT_A_PIN   = 7;
+const int AIM_TILT_B_PIN   = 6;
+const int AIM_PAN_PIN      = 5;
+const int LAUNCH_MOTOR_PIN = 4;
+const int SOLENOID         = 3;
+const int GATE_PIN         = 2;
+
+// =====================
+// Buttons
+// =====================
+
+const int UP_BTN         = 26;
+const int DOWN_BTN       = 27;
+const int LEFT_BTN       = 28;
+const int RIGHT_BTN      = 29;
+const int WRIST_UP       = 30;
+const int WRIST_DOWN     = 31;
+const int CLAW_CLOSE     = 32;
+const int CLAW_OPEN      = 33;
+const int AIM_UP_BTN     = 34;
+const int AIM_DOWN_BTN   = 35;
+const int AIM_LEFT_BTN   = 36;
+const int AIM_RIGHT_BTN  = 37;
+const int LAUNCH_BTN     = 38;
+
+// =====================
+// SERVOS
+// =====================
+
+Servo LIFT;
+Servo PAN;
+Servo WRIST;
+Servo CLAW;
+Servo AIM_TILT_A;
+Servo AIM_TILT_B;
+Servo AIM_PAN;
+Servo GATE;
+
+// =====================
+// TIMING
+// =====================
+
+const unsigned long GATE_HOLD_TIME = 8000;
+const unsigned long MOTOR_RUN_TIME = 3000;
+const unsigned long PIN3_DELAY_TIME = 2500;  // delay after gate press
+const unsigned long PIN3_ON_TIME    = 500;   // how long pin 3 stays HIGH
+
+// =====================
+// POSITION LIMITS
+// =====================
+
+int LIFT_POS = 50;
+const int LIFT_MIN = 0;
+const int LIFT_MAX = 50;
+
+int PAN_POS = 0;
+const int PAN_MIN = -45;
+const int PAN_MAX = 45;
+
+int WRIST_POS = 0;
+const int WRIST_MIN = 0;
+const int WRIST_MAX = 40;
+
+int CLAW_POS = 10;
+const int CLAW_MIN = 10;
+const int CLAW_MAX = 45;
+
+int AIM_POS = 0;
+int AIM_A_START = -10;
+int AIM_B_START = 0;
+const int AIM_MIN = -90;
+const int AIM_MAX = 90;
+
+int AIM_PAN_POS = -10;
+const int AIM_PAN_MIN = -25;
+const int AIM_PAN_MAX = 5;
+
+int GATE_POS = 0;
+const int GATE_MIN = 0;
+const int GATE_MAX = 60;
+
+
+// =====================
+// TIMERS
+// =====================
+
+unsigned long lastLiftTime   = 0;
+unsigned long lastPanTime    = 0;
+unsigned long lastWristTime  = 0;
+unsigned long lastClawTime   = 0;
+unsigned long lastAimTime    = 0;
+unsigned long lastAimPanTime = 0;
+
+// =====================
+// STATE
+// =====================
+
+bool gateActive = false;
+bool motorActive = false;
+
+unsigned long gateStartTime = 0;
+unsigned long motorStartTime = 0;
+
+// PIN 3 STATE
+bool pin3Active = false;
+bool pin3Fired = false;
+unsigned long pin3StartTime = 0;
+
+// =====================
+// MAPPING
+// =====================
+
+int mapPAN(int val) {
+  return map(val, -45, 45, 0, 90);
+}
+
+int mapAIM(int val) {
+  return map(val, -90, 90, 0, 180);
+}
+
+int mapAIMPAN(int val) {
+  return map(val, -90, 90, 0, 180);
+}
+
+// =====================
+// GATE FUNCTION
+// =====================
+
+void runGateSequence(unsigned long now) {
+
+  if (!gateActive && digitalRead(LAUNCH_BTN) == LOW) {
+
+    gateActive = true;
+    gateStartTime = now;
+
+    GATE.write(GATE_MAX);
+
+    motorActive = true;
+    motorStartTime = now;
+    digitalWrite(LAUNCH_MOTOR_PIN, HIGH);
+
+    // reset pin 3 state
+    pin3Active = false;
+    pin3Fired = false;
+    digitalWrite(SOLENOID, LOW);
+  }
+
+  // motor off
+  if (motorActive && now - motorStartTime >= MOTOR_RUN_TIME) {
+    digitalWrite(LAUNCH_MOTOR_PIN, LOW);
+    motorActive = false;
+  }
+
+  // PIN 3 ON (delayed)
+  if (gateActive && !pin3Fired && now - gateStartTime >= PIN3_DELAY_TIME) {
+    digitalWrite(SOLENOID, HIGH);
+    pin3Active = true;
+    pin3Fired = true;
+    pin3StartTime = now;
+  }
+
+  // PIN 3 OFF
+  if (pin3Active && now - pin3StartTime >= PIN3_ON_TIME) {
+    digitalWrite(SOLENOID, LOW);
+    pin3Active = false;
+  }
+
+  // gate close
+  if (gateActive && now - gateStartTime >= GATE_HOLD_TIME) {
+    GATE.write(GATE_MIN);
+    gateActive = false;
+  }
+}
+
+// =====================
+// SETUP
+// =====================
+
+void setup() {
+
+  Serial.begin(9600);
+
+  LIFT.attach(LIFT_PIN, 500, 2500);
+  PAN.attach(PAN_PIN, 500, 2500);
+  WRIST.attach(WRIST_PIN, 500, 2500);
+  CLAW.attach(CLAW_PIN, 500, 2500);
+  AIM_TILT_A.attach(AIM_TILT_A_PIN, 500, 2500);
+  AIM_TILT_B.attach(AIM_TILT_B_PIN, 500, 2500);
+  AIM_PAN.attach(AIM_PAN_PIN, 500, 2500);
+  GATE.attach(GATE_PIN, 500, 2500);
+
+  pinMode(LAUNCH_MOTOR_PIN, OUTPUT);
+  pinMode(SOLENOID, OUTPUT);
+
+  digitalWrite(LAUNCH_MOTOR_PIN, LOW);
+  digitalWrite(SOLENOID, LOW);
+
+  pinMode(DOWN_BTN, INPUT_PULLUP);
+  pinMode(UP_BTN, INPUT_PULLUP);
+  pinMode(LEFT_BTN, INPUT_PULLUP);
+  pinMode(RIGHT_BTN, INPUT_PULLUP);
+  pinMode(WRIST_UP, INPUT_PULLUP);
+  pinMode(WRIST_DOWN, INPUT_PULLUP);
+  pinMode(CLAW_OPEN, INPUT_PULLUP);
+  pinMode(CLAW_CLOSE, INPUT_PULLUP);
+  pinMode(AIM_UP_BTN, INPUT_PULLUP);
+  pinMode(AIM_DOWN_BTN, INPUT_PULLUP);
+  pinMode(AIM_LEFT_BTN, INPUT_PULLUP);
+  pinMode(AIM_RIGHT_BTN, INPUT_PULLUP);
+  pinMode(LAUNCH_BTN, INPUT_PULLUP);
+
+  LIFT.write(LIFT_POS);
+  PAN.write(mapPAN(PAN_POS));
+  WRIST.write(WRIST_POS);
+  CLAW.write(CLAW_POS);
+  AIM_TILT_A.write(mapAIM(AIM_A_START));
+  AIM_TILT_B.write(mapAIM(AIM_B_START));
+  AIM_PAN.write(mapAIMPAN(AIM_PAN_POS));
+  GATE.write(GATE_POS);
+}
+
+// =====================
+// LOOP
+// =====================
+
+void loop() {
+
+  unsigned long now = millis();
+
+  // servo logic unchanged
+  if (now - lastLiftTime >= 60) {
+    lastLiftTime = now;
+
+    if (digitalRead(DOWN_BTN) == LOW && LIFT_POS > LIFT_MIN) {
+      LIFT_POS--;
+      LIFT.write(LIFT_POS);
+    }
+
+    if (digitalRead(UP_BTN) == LOW && LIFT_POS < LIFT_MAX) {
+      LIFT_POS++;
+      LIFT.write(LIFT_POS);
+    }
+  }
+
+  if (now - lastPanTime >= 55) {
+    lastPanTime = now;
+
+    if (digitalRead(LEFT_BTN) == LOW && PAN_POS > PAN_MIN) {
+      PAN_POS--;
+      PAN.write(mapPAN(PAN_POS));
+    }
+
+    if (digitalRead(RIGHT_BTN) == LOW && PAN_POS < PAN_MAX) {
+      PAN_POS++;
+      PAN.write(mapPAN(PAN_POS));
+    }
+  }
+
+  if (now - lastWristTime >= 55) {
+    lastWristTime = now;
+
+    if (digitalRead(WRIST_DOWN) == LOW && WRIST_POS > WRIST_MIN) {
+      WRIST_POS--;
+      WRIST.write(WRIST_POS);
+    }
+
+    if (digitalRead(WRIST_UP) == LOW && WRIST_POS < WRIST_MAX) {
+      WRIST_POS++;
+      WRIST.write(WRIST_POS);
+    }
+  }
+
+  if (now - lastClawTime >= 50) {
+    lastClawTime = now;
+
+    if (digitalRead(CLAW_CLOSE) == LOW && CLAW_POS < CLAW_MAX) {
+      CLAW_POS++;
+      CLAW.write(CLAW_POS);
+    }
+
+    if (digitalRead(CLAW_OPEN) == LOW && CLAW_POS > CLAW_MIN) {
+      CLAW_POS--;
+      CLAW.write(CLAW_POS);
+    }
+  }
+
+  if (now - lastAimTime >= 30) {
+    lastAimTime = now;
+
+    if (digitalRead(AIM_DOWN_BTN) == LOW && AIM_POS > AIM_MIN) {
+      AIM_POS--;
+      AIM_TILT_A.write(mapAIM(AIM_POS));
+      AIM_TILT_B.write(mapAIM(-AIM_POS));
+    }
+
+    if (digitalRead(AIM_UP_BTN) == LOW && AIM_POS < AIM_MAX) {
+      AIM_POS++;
+      AIM_TILT_A.write(mapAIM(AIM_POS));
+      AIM_TILT_B.write(mapAIM(-AIM_POS));
+    }
+  }
+
+  if (now - lastAimPanTime >= 50) {
+    lastAimPanTime = now;
+
+    if (digitalRead(AIM_LEFT_BTN) == LOW && AIM_PAN_POS > AIM_PAN_MIN) {
+      AIM_PAN_POS--;
+      AIM_PAN.write(mapAIMPAN(AIM_PAN_POS));
+    }
+
+    if (digitalRead(AIM_RIGHT_BTN) == LOW && AIM_PAN_POS < AIM_PAN_MAX) {
+      AIM_PAN_POS++;
+      AIM_PAN.write(mapAIMPAN(AIM_PAN_POS));
+    }
+  }
+
+  runGateSequence(now);
+}
