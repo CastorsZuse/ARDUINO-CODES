@@ -1,0 +1,70 @@
+#include <ServoInput.h>
+
+float percent_threshold = .7;
+float percent1;
+float percent2;
+float percent3;
+float percent4;
+
+int builtin_status;
+
+ServoInputPin<1> ch1;
+ServoInputPin<0> ch2;
+ServoInputPin<2> ch3;
+ServoInputPin<3> ch4;
+
+void setup() {
+  pinMode(LED_BUILTIN, OUTPUT);
+  pinMode(7, OUTPUT);
+  pinMode(6, OUTPUT);
+  pinMode(5, OUTPUT);
+  pinMode(4, OUTPUT);
+  ch1.attach();
+  ch2.attach();
+  ch3.attach();
+  ch4.attach();
+}
+
+void loop() {
+  //boolean state2 = ch2.getBoolean();
+  //boolean state3 = ch3.getBoolean();
+  //boolean state18 = ch18.getBoolean();
+  //boolean state19 = ch19.getBoolean();
+
+  builtin_status = LOW;
+
+  percent1 = ch1.getPercent();
+  percent2 = ch2.getPercent();
+  percent3 = ch3.getPercent();
+  percent4 = ch4.getPercent();
+
+  if (percent1 >= percent_threshold) {
+    digitalWrite(4, HIGH);
+    builtin_status = HIGH;
+  } else {
+    digitalWrite(4, LOW);
+  }
+
+  if (percent2 >= percent_threshold) {
+    digitalWrite(5, HIGH);
+    builtin_status = HIGH;
+  } else {
+    digitalWrite(5, LOW);
+  }
+
+  if (percent3 >= percent_threshold) {
+    digitalWrite(6, HIGH);
+    builtin_status = HIGH;
+  } else {
+    digitalWrite(6, LOW);
+  }
+
+  if (percent4 >= percent_threshold) {
+    digitalWrite(7, HIGH);
+    builtin_status = HIGH;
+  } else {
+    digitalWrite(7, LOW);
+  }
+
+  digitalWrite(LED_BUILTIN, builtin_status);
+}
