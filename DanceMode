@@ -1,245 +1,288 @@
+/*
+  RC Robot Arms  (board-independent version)
+  -------------------------------------------
+  Inputs:  Pin 7 = 3-position switch A (PWM from receiver)
+           Pin 8 = 3-position switch B (PWM from receiver)
+  Outputs: R_SERVO, L_SERVO (arms), Pin 11 (ACTION_B)
+
+  Arm positions (degrees off CENTER):  UP = +45, CENTER = 0, DOWN = -25
+  Servos are mirrored.
+
+  A_HIGH -> ACTION_A : L arm UP, halfway, UP, wait 1s, CENTER (once)
+  A_LOW  -> ACTION_B : Pin 11 HIGH
+  B_HIGH -> ACTION_C : both arms UP <-> CENTER, looping while held
+  B_LOW  -> ACTION_D : L UP + R DOWN, wait 0.5s, L DOWN + R UP, wait 0.5s, looping
+
+  No input / neutral = arms at CENTER.
+*/
+
 #include <Servo.h>
 
-Servo servo1;
-Servo servo2;
+// ---------------- DEBUG ----------------
+const bool DEBUG = false;             // true = prints pulse widths to Serial Monitor (115200)
 
-// =====================
-//      SETTINGS
-// =====================
+// ---------------- PIN SETUP ----------------
+const uint8_t PIN_SWITCH_A = 7;
+const uint8_t PIN_SWITCH_B = 8;
+const uint8_t PIN_ACTION_B = 11;
+const uint8_t PIN_R_SERVO  = 9;    // change to match your wiring
+const uint8_t PIN_L_SERVO  = 10;   // change to match your wiring
 
-#define SERVO1_PIN 9
-#define SERVO2_PIN 10
+// ---------------- SERVO SETUP ----------------
+const float POS_UP     =  45.0;
+const float POS_CENTER =   0.0;
+const float POS_DOWN   = -25.0;
+const float POS_HALF   = (POS_UP + POS_CENTER) / 2.0;
 
-#define RC_PIN 7
+const int   SERVO_MID_ANGLE = 90;     // physical servo angle that equals CENTER
+const int   R_DIR = +1;               // flip to -1 if R arm moves the wrong way
+const int   L_DIR = -1;               // flip to +1 if L arm moves the wrong way
+const float NO_CHANGE = 999.0;        // "leave this servo alone"
 
-// =====================
-//   SERVO POSITIONS
-// =====================
+// Servo pulse range (Servo library defaults). Adjust if your servos need different values.
+const float SERVO_MIN_US = 544.0;     // pulse for 0 degrees
+const float SERVO_MAX_US = 2400.0;    // pulse for 180 degrees
 
-int CENTER = 0;
+// ---------------- SERVO SPEEDS (degrees per second) ----------------
+// Lower = slower.  ~45 slow, ~90 moderate, ~180 fast
+const float SPEED_A      = 180.0;     // ACTION_A
+const float SPEED_C      = 90.0;     // ACTION_C
+const float SPEED_D      = 160.0;     // ACTION_D
+const float SPEED_RETURN = 120.0;     // returning to CENTER when a switch is released
 
-int UP = -35;
+float servoSpeed = SPEED_RETURN;      // speed currently in use
 
-// Action B down positions
-int SERVO1_DOWN = 45;
-int SERVO2_DOWN = 45;
+// ---------------- RC THRESHOLDS ----------------
+const uint16_t RC_HIGH = 1700;        // pulse > this  = HIGH
+const uint16_t RC_LOW  = 1300;        // pulse < this  = LOW
+const uint16_t PULSE_MIN_VALID = 800; // pulses outside this range are ignored
+const uint16_t PULSE_MAX_VALID = 2300;
+const uint32_t SIGNAL_TIMEOUT_US = 100000UL;
+const uint32_t DEBOUNCE_MS = 100;     // switch change must hold this long
 
-// Physical servo center
-int SERVO_OFFSET = 45;
+// ---------------- SWITCH STATES ----------------
+const uint8_t SW_NONE = 0;            // middle position or no signal
+const uint8_t SW_LOW  = 1;
+const uint8_t SW_HIGH = 2;
 
-int SERVO_SPEED = 10;
-int MOVE_TIME = 500;
+// ---------------- RC PULSE READING (polling) ----------------
+const uint8_t PIN_SW[2] = { PIN_SWITCH_A, PIN_SWITCH_B };
+bool     prevLevel[2] = { false, false };
+uint32_t riseT[2]     = { 0, 0 };
+uint32_t lastT[2]     = { 0, 0 };
+uint16_t widthUs[2]   = { 0, 0 };     // filtered (median of last 3) pulse width
+uint16_t badCount[2]  = { 0, 0 };     // rejected pulses (debug info)
 
-// =====================
-// RC SETTINGS
-// =====================
+uint16_t hist[2][3]   = { {1500, 1500, 1500}, {1500, 1500, 1500} };
+uint8_t  histIdx[2]   = { 0, 0 };
 
-#define LOW_MIN  800
-#define LOW_MAX  1200
+uint8_t  stableState[2] = { SW_NONE, SW_NONE };
+uint8_t  candState[2]   = { SW_NONE, SW_NONE };
+uint32_t candSince[2]   = { 0, 0 };
 
-#define HIGH_MIN 1800
-#define HIGH_MAX 2200
-
-#define CONFIRM_COUNT 3
-
-// =====================
-
-// Convert coordinate to actual servo position
-int servoPosition(int position) {
-  return position + SERVO_OFFSET;
+uint16_t median3(uint16_t a, uint16_t b, uint16_t c) {
+  if (a > b) { uint16_t t = a; a = b; b = t; }
+  if (b > c) { uint16_t t = b; b = c; c = t; }
+  if (a > b) { b = a; }
+  return b;
 }
 
-// =====================
-// MOVE BOTH SERVOS
-// =====================
-
-void moveServos(int servo1Start, int servo1End,
-                int servo2Start, int servo2End) {
-
-  int distance = max(abs(servo1End - servo1Start),
-                     abs(servo2End - servo2Start));
-
-  for (int i = 0; i <= distance; i++) {
-
-    int pos1;
-    int pos2;
-
-    // Servo 1
-    if (servo1Start < servo1End) {
-      pos1 = servo1Start + i;
+void pollInputs() {
+  for (uint8_t i = 0; i < 2; i++) {
+    bool lvl = digitalRead(PIN_SW[i]);
+    if (lvl && !prevLevel[i]) {
+      riseT[i] = micros();
+    } else if (!lvl && prevLevel[i]) {
+      uint32_t now = micros();
+      uint32_t w = now - riseT[i];
+      if (w >= PULSE_MIN_VALID && w <= PULSE_MAX_VALID) {
+        hist[i][histIdx[i]] = (uint16_t)w;            // good pulse
+        histIdx[i] = (histIdx[i] + 1) % 3;
+        widthUs[i] = median3(hist[i][0], hist[i][1], hist[i][2]);
+        lastT[i] = now;
+      } else {
+        badCount[i]++;                // missed an edge: throw it away
+      }
     }
-    else {
-      pos1 = servo1Start - i;
-    }
-
-    // Servo 2
-    if (servo2Start < servo2End) {
-      pos2 = servo2Start + i;
-    }
-    else {
-      pos2 = servo2Start - i;
-    }
-
-    servo1.write(servoPosition(pos1));
-    servo2.write(servoPosition(pos2));
-
-    delay(SERVO_SPEED);
+    prevLevel[i] = lvl;
   }
 }
 
-// =====================
-// CENTER SERVOS
-// =====================
-
-void centerServos() {
-  servo1.write(servoPosition(CENTER));
-  servo2.write(servoPosition(CENTER));
+uint8_t readSwitch(uint8_t i) {
+  uint8_t raw = SW_NONE;
+  if (micros() - lastT[i] <= SIGNAL_TIMEOUT_US) {
+    if (widthUs[i] > RC_HIGH) raw = SW_HIGH;
+    else if (widthUs[i] > 0 && widthUs[i] < RC_LOW) raw = SW_LOW;
+  }
+  // debounce: raw state must stay the same for DEBOUNCE_MS
+  if (raw != candState[i]) {
+    candState[i] = raw;
+    candSince[i] = millis();
+  }
+  if (millis() - candSince[i] >= DEBOUNCE_MS) stableState[i] = candState[i];
+  return stableState[i];
 }
 
-// =====================
-// SETUP
-// =====================
+// ---------------- SERVO CONTROL (smooth, non-blocking) ----------------
+Servo rServo, lServo;
+float rPos = POS_CENTER, lPos = POS_CENTER;
+float rTarget = POS_CENTER, lTarget = POS_CENTER;
+uint32_t lastServoUpdate = 0;
+int lastUsR = 0, lastUsL = 0;         // last pulse sent to each servo
+
+int angleToUs(float angleDeg) {
+  return (int)(SERVO_MIN_US + angleDeg * (SERVO_MAX_US - SERVO_MIN_US) / 180.0 + 0.5);
+}
+
+void writeServos() {
+  int r = angleToUs(SERVO_MID_ANGLE + R_DIR * rPos);
+  int l = angleToUs(SERVO_MID_ANGLE + L_DIR * lPos);
+  if (r != lastUsR) { rServo.writeMicroseconds(r); lastUsR = r; }   // only write on change
+  if (l != lastUsL) { lServo.writeMicroseconds(l); lastUsL = l; }
+}
+
+float stepToward(float cur, float target, float maxStep) {
+  if (fabs(target - cur) <= maxStep) return target;
+  return cur + (target > cur ? maxStep : -maxStep);
+}
+
+void updateServos() {
+  uint32_t now = micros();
+  float dt = (now - lastServoUpdate) / 1000000.0;
+  lastServoUpdate = now;
+  float maxStep = servoSpeed * dt;
+  rPos = stepToward(rPos, rTarget, maxStep);
+  lPos = stepToward(lPos, lTarget, maxStep);
+  writeServos();
+}
+
+bool servosArrived() { return rPos == rTarget && lPos == lTarget; }
+
+void setTargets(float l, float r) {
+  if (l != NO_CHANGE) lTarget = l;
+  if (r != NO_CHANGE) rTarget = r;
+}
+
+// ---------------- SEQUENCE ENGINE ----------------
+struct Step { float l; float r; uint16_t holdMs; };
+
+const Step SEQ_A[] = {                // ACTION_A (R untouched)
+  { POS_UP,     NO_CHANGE, 0    },
+  { POS_HALF,   NO_CHANGE, 0    },
+  { POS_UP,     NO_CHANGE, 1000 },
+  { POS_CENTER, NO_CHANGE, 0    },
+};
+const Step SEQ_C[] = {                // ACTION_C
+  { POS_UP,     POS_UP,     0 },
+  { POS_CENTER, POS_CENTER, 0 },
+};
+const Step SEQ_D[] = {                // ACTION_D
+  { POS_UP,   POS_DOWN, 500 },
+  { POS_DOWN, POS_UP,   500 },
+};
+
+const uint8_t ACT_NONE = 0;
+const uint8_t ACT_A    = 1;
+const uint8_t ACT_C    = 2;
+const uint8_t ACT_D    = 3;
+
+const Step* seq = nullptr;
+uint8_t seqLen = 0, seqIdx = 0;
+bool seqLoop = false, seqHolding = false;
+uint32_t holdStart = 0;
+uint8_t currentAction = ACT_NONE;
+
+void applyStep() {
+  setTargets(seq[seqIdx].l, seq[seqIdx].r);
+  seqHolding = false;
+}
+
+void startAction(uint8_t id) {
+  currentAction = id;
+  seqIdx = 0;
+  if (id == ACT_A)      { seq = SEQ_A; seqLen = sizeof(SEQ_A) / sizeof(Step); seqLoop = false; servoSpeed = SPEED_A; }
+  else if (id == ACT_C) { seq = SEQ_C; seqLen = sizeof(SEQ_C) / sizeof(Step); seqLoop = true;  servoSpeed = SPEED_C; }
+  else if (id == ACT_D) { seq = SEQ_D; seqLen = sizeof(SEQ_D) / sizeof(Step); seqLoop = true;  servoSpeed = SPEED_D; }
+  else return;
+  applyStep();
+}
+
+void stopAction() {                   // return to CENTER
+  currentAction = ACT_NONE;
+  seq = nullptr;
+  servoSpeed = SPEED_RETURN;
+  setTargets(POS_CENTER, POS_CENTER);
+}
+
+void updateSequence() {
+  if (currentAction == ACT_NONE) return;
+  if (!seqHolding) {
+    if (!servosArrived()) return;
+    seqHolding = true;
+    holdStart = millis();
+  }
+  if (millis() - holdStart < seq[seqIdx].holdMs) return;
+
+  seqIdx++;
+  if (seqIdx >= seqLen) {
+    if (seqLoop) seqIdx = 0;
+    else { stopAction(); return; }    // one-shot finished
+  }
+  applyStep();
+}
+
+// ---------------- MAIN ----------------
+bool aLatch = false;   // ACTION_A fires once per switch throw
+uint32_t lastPrint = 0;
 
 void setup() {
+  if (DEBUG) Serial.begin(115200);
 
-  servo1.attach(SERVO1_PIN);
-  servo2.attach(SERVO2_PIN);
+  pinMode(PIN_SWITCH_A, INPUT);
+  pinMode(PIN_SWITCH_B, INPUT);
+  pinMode(PIN_ACTION_B, OUTPUT);
+  digitalWrite(PIN_ACTION_B, LOW);
 
-  pinMode(RC_PIN, INPUT);
-
-  centerServos();
+  rServo.attach(PIN_R_SERVO);
+  lServo.attach(PIN_L_SERVO);
+  writeServos();                      // start at CENTER
+  lastServoUpdate = micros();
 }
 
-// =====================
-// LOOP
-// =====================
-
 void loop() {
+  pollInputs();
+  uint8_t a = readSwitch(0);
+  uint8_t b = readSwitch(1);
 
-  int signal = pulseIn(RC_PIN, HIGH, 25000);
-
-  // =====================
-  // ACTION A
-  // ~988us
-  // =====================
-
-  if (signal >= LOW_MIN && signal <= LOW_MAX) {
-
-    int count = 0;
-
-    while (count < CONFIRM_COUNT) {
-
-      signal = pulseIn(RC_PIN, HIGH, 25000);
-
-      if (signal >= LOW_MIN && signal <= LOW_MAX) {
-        count++;
-      }
-      else {
-        count = 0;
-      }
-
-      delay(5);
-    }
-
-    // Servo 1: 0 -> -35
-    // Servo 2: 0 -> +45
-    moveServos(CENTER, UP, CENTER, 45);
-
-    // Servo 1: -35 -> 0
-    // Servo 2: +45 -> 0
-    moveServos(UP, CENTER, 45, CENTER);
+  if (DEBUG && millis() - lastPrint > 250) {
+    lastPrint = millis();
+    Serial.print("A="); Serial.print(widthUs[0]);
+    Serial.print(" B="); Serial.print(widthUs[1]);
+    Serial.print(" stateA="); Serial.print(a);
+    Serial.print(" stateB="); Serial.print(b);
+    Serial.print(" badA="); Serial.print(badCount[0]);
+    Serial.print(" badB="); Serial.print(badCount[1]);
+    Serial.print(" action="); Serial.println(currentAction);
   }
 
-  // =====================
-  // ACTION B
-  // ~2012us
-  // =====================
+  // ACTION_B: pin 11 follows A_LOW
+  digitalWrite(PIN_ACTION_B, a == SW_LOW ? HIGH : LOW);
 
-  else if (signal >= HIGH_MIN && signal <= HIGH_MAX) {
+  if (a != SW_HIGH) aLatch = false;   // re-arm ACTION_A
 
-    int count = 0;
-
-    while (count < CONFIRM_COUNT) {
-
-      signal = pulseIn(RC_PIN, HIGH, 25000);
-
-      if (signal >= HIGH_MIN && signal <= HIGH_MAX) {
-        count++;
-      }
-      else {
-        count = 0;
-      }
-
-      delay(5);
-    }
-
-    // =====================
-    // START ACTION B
-    // =====================
-
-    // Start from current CENTER position
-    // and move to UP position.
-    //
-    // Servo 1: 0 -> -35
-    // Servo 2: 0 -> -35
-
-    moveServos(CENTER, UP, CENTER, UP);
-
-    delay(MOVE_TIME);
-
-    // =====================
-    // ACTION B LOOP
-    // =====================
-
-    while (true) {
-
-      // =====================
-      // STEP 2
-      // =====================
-
-      // Servo 1: -35 -> +45
-      // Servo 2: -35 -> +45
-
-      moveServos(UP, SERVO1_DOWN,
-                 UP, SERVO2_DOWN);
-
-      delay(MOVE_TIME);
-
-      // =====================
-      // STEP 3
-      // =====================
-
-      // Servo 1: +45 -> -35
-      // Servo 2: +45 -> -35
-      //
-      // GO BACK TO UP
-      // NOT CENTER
-
-      moveServos(SERVO1_DOWN, UP,
-                 SERVO2_DOWN, UP);
-
-      delay(MOVE_TIME);
-
-      // =====================
-      // CHECK RC SIGNAL
-      // =====================
-
-      signal = pulseIn(RC_PIN, HIGH, 25000);
-
-      if (signal < HIGH_MIN || signal > HIGH_MAX) {
-        break;
-      }
-    }
-
-    // Return to center when Action B is released
-    centerServos();
+  if (currentAction == ACT_A) {
+    // ACTION_A is a one-shot: let it finish
+  } else if (a == SW_HIGH && !aLatch) {
+    aLatch = true;
+    startAction(ACT_A);
+  } else if (b == SW_HIGH) {
+    if (currentAction != ACT_C) startAction(ACT_C);
+  } else if (b == SW_LOW) {
+    if (currentAction != ACT_D) startAction(ACT_D);
+  } else if (currentAction != ACT_NONE) {
+    stopAction();                     // trigger released -> CENTER
   }
 
-  // =====================
-  // NO SIGNAL / CENTER
-  // =====================
-
-  else {
-    centerServos();
-  }
+  updateSequence();
+  updateServos();
 }
