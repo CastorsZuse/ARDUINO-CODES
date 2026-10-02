@@ -1,0 +1,245 @@
+#include <Servo.h>
+
+Servo servo1;
+Servo servo2;
+
+// =====================
+//      SETTINGS
+// =====================
+
+#define SERVO1_PIN 9
+#define SERVO2_PIN 10
+
+#define RC_PIN 7
+
+// =====================
+//   SERVO POSITIONS
+// =====================
+
+int CENTER = 0;
+
+int UP = -35;
+
+// Action B down positions
+int SERVO1_DOWN = 45;
+int SERVO2_DOWN = 45;
+
+// Physical servo center
+int SERVO_OFFSET = 45;
+
+int SERVO_SPEED = 10;
+int MOVE_TIME = 500;
+
+// =====================
+// RC SETTINGS
+// =====================
+
+#define LOW_MIN  800
+#define LOW_MAX  1200
+
+#define HIGH_MIN 1800
+#define HIGH_MAX 2200
+
+#define CONFIRM_COUNT 3
+
+// =====================
+
+// Convert coordinate to actual servo position
+int servoPosition(int position) {
+  return position + SERVO_OFFSET;
+}
+
+// =====================
+// MOVE BOTH SERVOS
+// =====================
+
+void moveServos(int servo1Start, int servo1End,
+                int servo2Start, int servo2End) {
+
+  int distance = max(abs(servo1End - servo1Start),
+                     abs(servo2End - servo2Start));
+
+  for (int i = 0; i <= distance; i++) {
+
+    int pos1;
+    int pos2;
+
+    // Servo 1
+    if (servo1Start < servo1End) {
+      pos1 = servo1Start + i;
+    }
+    else {
+      pos1 = servo1Start - i;
+    }
+
+    // Servo 2
+    if (servo2Start < servo2End) {
+      pos2 = servo2Start + i;
+    }
+    else {
+      pos2 = servo2Start - i;
+    }
+
+    servo1.write(servoPosition(pos1));
+    servo2.write(servoPosition(pos2));
+
+    delay(SERVO_SPEED);
+  }
+}
+
+// =====================
+// CENTER SERVOS
+// =====================
+
+void centerServos() {
+  servo1.write(servoPosition(CENTER));
+  servo2.write(servoPosition(CENTER));
+}
+
+// =====================
+// SETUP
+// =====================
+
+void setup() {
+
+  servo1.attach(SERVO1_PIN);
+  servo2.attach(SERVO2_PIN);
+
+  pinMode(RC_PIN, INPUT);
+
+  centerServos();
+}
+
+// =====================
+// LOOP
+// =====================
+
+void loop() {
+
+  int signal = pulseIn(RC_PIN, HIGH, 25000);
+
+  // =====================
+  // ACTION A
+  // ~988us
+  // =====================
+
+  if (signal >= LOW_MIN && signal <= LOW_MAX) {
+
+    int count = 0;
+
+    while (count < CONFIRM_COUNT) {
+
+      signal = pulseIn(RC_PIN, HIGH, 25000);
+
+      if (signal >= LOW_MIN && signal <= LOW_MAX) {
+        count++;
+      }
+      else {
+        count = 0;
+      }
+
+      delay(5);
+    }
+
+    // Servo 1: 0 -> -35
+    // Servo 2: 0 -> +45
+    moveServos(CENTER, UP, CENTER, 45);
+
+    // Servo 1: -35 -> 0
+    // Servo 2: +45 -> 0
+    moveServos(UP, CENTER, 45, CENTER);
+  }
+
+  // =====================
+  // ACTION B
+  // ~2012us
+  // =====================
+
+  else if (signal >= HIGH_MIN && signal <= HIGH_MAX) {
+
+    int count = 0;
+
+    while (count < CONFIRM_COUNT) {
+
+      signal = pulseIn(RC_PIN, HIGH, 25000);
+
+      if (signal >= HIGH_MIN && signal <= HIGH_MAX) {
+        count++;
+      }
+      else {
+        count = 0;
+      }
+
+      delay(5);
+    }
+
+    // =====================
+    // START ACTION B
+    // =====================
+
+    // Start from current CENTER position
+    // and move to UP position.
+    //
+    // Servo 1: 0 -> -35
+    // Servo 2: 0 -> -35
+
+    moveServos(CENTER, UP, CENTER, UP);
+
+    delay(MOVE_TIME);
+
+    // =====================
+    // ACTION B LOOP
+    // =====================
+
+    while (true) {
+
+      // =====================
+      // STEP 2
+      // =====================
+
+      // Servo 1: -35 -> +45
+      // Servo 2: -35 -> +45
+
+      moveServos(UP, SERVO1_DOWN,
+                 UP, SERVO2_DOWN);
+
+      delay(MOVE_TIME);
+
+      // =====================
+      // STEP 3
+      // =====================
+
+      // Servo 1: +45 -> -35
+      // Servo 2: +45 -> -35
+      //
+      // GO BACK TO UP
+      // NOT CENTER
+
+      moveServos(SERVO1_DOWN, UP,
+                 SERVO2_DOWN, UP);
+
+      delay(MOVE_TIME);
+
+      // =====================
+      // CHECK RC SIGNAL
+      // =====================
+
+      signal = pulseIn(RC_PIN, HIGH, 25000);
+
+      if (signal < HIGH_MIN || signal > HIGH_MAX) {
+        break;
+      }
+    }
+
+    // Return to center when Action B is released
+    centerServos();
+  }
+
+  // =====================
+  // NO SIGNAL / CENTER
+  // =====================
+
+  else {
+    centerServos();
+  }
+}
